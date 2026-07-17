@@ -1,0 +1,8 @@
+# Python dependencies for LautBau
+# Core
+epitran>=1.24
+panphon>=0.20
+click>=8.1
+
+# Development
+pytest>=8.0
