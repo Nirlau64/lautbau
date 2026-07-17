@@ -1,6 +1,4 @@
-"""IPA-Segmentierer: Zerlegt IPA-String in matchbare Segmente (2-4 Phoneme)."""
-
-# ── Phonem-Kategorien ───────────────────────────────────────────────────
+"""IPA-Segmentierer: Zerlegt IPA-String in matchbare Segmente (1-4 Phoneme)."""
 
 VOWELS = set("iyɨʉɯuɪʏʊeøɘɵɤoəɛœɜɞʌɔæɐaɶɑɒ")
 DIPHTHONGS = {
@@ -18,19 +16,12 @@ def _is_consonant(ch: str) -> bool:
     return ch in CONSONANTS
 
 
-# ── Tokenizer ───────────────────────────────────────────────────────────
-
 def tokenize(ipa: str) -> list[str]:
-    """Zerlegt IPA-String in Phonem-Tokens.
-
-    Behandelt Diphthonge, ignoriert Diakritika.
-    """
+    """Zerlegt IPA-String in Phonem-Tokens."""
     tokens = []
     i = 0
     while i < len(ipa):
         ch = ipa[i]
-
-        # Tie-Bar überspringen (Affrikaten)
         if ch in "͜͡":
             if tokens and i + 1 < len(ipa):
                 tokens[-1] = tokens[-1] + ipa[i + 1]
@@ -38,50 +29,44 @@ def tokenize(ipa: str) -> list[str]:
                 continue
             i += 1
             continue
-
-        # Diphthong (2 Zeichen)
         if i + 1 < len(ipa):
             pair = ipa[i : i + 2]
             if pair in DIPHTHONGS or (_is_vowel(ipa[i]) and _is_vowel(ipa[i + 1])):
                 tokens.append(pair)
                 i += 2
                 continue
-
         tokens.append(ch)
         i += 1
-
     return tokens
 
-
-# ── Segmentierer ────────────────────────────────────────────────────────
 
 def segment(tokens: list[str]) -> list[list[str]]:
     """Gruppiert Phonem-Tokens in matchbare Segmente.
 
-    Strategie: Onset-Nucleus-Coda um Vokale herum.
-    Segmente haben 2-4 Phoneme, kurze Wörter (≤3 Phoneme) bleiben ganz.
+    Strategie: Onset vom Nucleus+Coda trennen. Dadurch können
+    triviale Konsonanten (wie /n/, /t/) einzeln bleiben und
+    der interessante Teil (Vokal+Diphthong) separat gematcht werden.
 
-    Args:
-        tokens: Liste von Phonem-Tokens (aus tokenize())
-
-    Returns:
-        Liste von Segmenten (jedes Segment = Liste von Tokens)
+    Beispiele:
+        /naɪt/ → [n] [aɪt]
+        /kæt/  → [k] [æt]
+        /ðoʊ/  → [ð] [oʊ]
     """
-    if len(tokens) <= 3:
-        return [tokens]
-
     segments = []
     i = 0
 
     while i < len(tokens):
         remaining = len(tokens) - i
 
-        # Wenig übrig → Rest als letztes Segment
-        if remaining <= 2:
+        if remaining == 0:
+            break
+
+        # Wenig übrig → Rest als Segment
+        if remaining <= 1:
             segments.append(tokens[i:])
             break
 
-        # Nächsten Vokal finden (als Segment-Anker)
+        # Nächsten Vokal finden
         vowel_pos = None
         for j in range(i, min(i + 4, len(tokens))):
             if _is_vowel(tokens[j]) or (
@@ -91,44 +76,34 @@ def segment(tokens: list[str]) -> list[list[str]]:
                 break
 
         if vowel_pos is None:
-            # Kein Vokal in Reichweite → 2 Konsonanten als Segment
             segments.append(tokens[i : i + 2])
             i += 2
             continue
 
-        # Onset: Konsonanten vor dem Vokal (max 3 am Wortanfang, sonst 2)
-        max_onset = 3 if i == 0 else 2
-        onset_start = max(i, vowel_pos - max_onset)
+        # Onset (Konsonanten vor Vokal) als eigenes Segment?
+        # Nur wenn: mindestens 2 Konsonanten ODER das gesamte Wort ≥5 Phoneme hat
+        onset_end = vowel_pos
+        onset_size = onset_end - i
+        if onset_size >= 2 or (onset_size >= 1 and len(tokens) >= 5):
+            segments.append(tokens[i:onset_end])
+            i = onset_end
+            continue
+
+        # Onset nicht abgespalten → ganzes Segment ab i
         coda_end = min(len(tokens), vowel_pos + 2)
-
-        segment_tokens = tokens[onset_start:coda_end]
-
-        # Nicht zu kurz: ggf. einen Token mehr
-        if len(segment_tokens) < 2 and coda_end < len(tokens):
-            segment_tokens = tokens[onset_start : coda_end + 1]
-
-        # Nicht zu lang: auf max 4 kürzen
-        if len(segment_tokens) > 4:
-            segment_tokens = tokens[onset_start : vowel_pos + 2]
-
-        segments.append(segment_tokens)
+        segments.append(tokens[i:coda_end])
         i = coda_end
 
-    # Merge: zu kurze Segmente (1 Token) an Nachbar anhängen
+    # Merge: zu kurze Segmente an Nachbarn (nur wenn beide konsonantisch)
     merged = []
     for seg in segments:
-        if merged and len(seg) <= 1:
+        if merged and len(seg) == 1 and len(merged[-1]) == 1:
             merged[-1].extend(seg)
         else:
             merged.append(seg)
-
-    if len(merged) >= 2 and len(merged[-1]) <= 1:
-        merged[-2].extend(merged[-1])
-        merged.pop()
 
     return merged
 
 
 def segments_to_str(segments: list[list[str]]) -> str:
-    """Formatierte Ausgabe: 'skwər · əl'"""
     return " · ".join("".join(seg) for seg in segments)
