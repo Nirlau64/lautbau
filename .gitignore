@@ -8,6 +8,7 @@ venv/
 
 # Database
 *.db
+data/kaikki-de.jsonl
 
 # IDE
 .vscode/
