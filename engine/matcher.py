@@ -35,23 +35,24 @@ class Matcher:
         self.db_path = Path(db_path)
         self._dst = panphon.distance.Distance()
 
-    def _query_candidates(self, segment_ipa: str, limit: int = 200) -> list[tuple[str, str]]:
-        """Findet deutsche Wörter, deren IPA den Segment-String als Substring
-        enthalten könnten. Nutzt LIKE für Grobfilter, verfeinert dann mit panphon.
+    def _query_candidates(self, segment_ipa: str, limit: int = 500) -> list[tuple[str, str]]:
+        """Findet deutsche Wörter mit passendem IPA-Substring.
 
-        Args:
-            segment_ipa: IPA-Segment (z.B. "oʊ")
-            limit: Max Anzahl Kandidaten für Grobfilter
-
-        Returns:
-            Liste von (word, ipa) Tupeln
+        Nutzt LIKE auf dem ersten Phonem als Grobfilter, erhöhtes Limit
+        für bessere Abdeckung.
         """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
 
-        # Grobfilter: IPA enthält mindestens ein Zeichen des Segments
-        # (LIKE ist schneller als FTS5 für diesen Use Case)
-        pattern = f"%{segment_ipa[0]}%"
+        # Grobfilter: IPA enthält erstes Phonem des Segments
+        first_phone = segment_ipa[0]
+        # Bei Diphthongen beide Zeichen
+        if len(segment_ipa) > 1 and segment_ipa[:2] in {
+            "aɪ", "aʊ", "ɔɪ", "eɪ", "oʊ", "ɪə", "eə", "ʊə",
+        }:
+            first_phone = segment_ipa[:2]
+
+        pattern = f"%{first_phone}%"
         rows = conn.execute(
             "SELECT word, ipa FROM words WHERE ipa LIKE ? LIMIT ?",
             (pattern, limit)
@@ -111,10 +112,43 @@ class Matcher:
             if m.word not in best_per_word or m.distance < best_per_word[m.word].distance:
                 best_per_word[m.word] = m
 
-        # Sortieren: Distanz, dann Wortlänge (kürzer = bekannter)
+        # Sortieren: Distanz, dann Wort-Qualität (kurz, einfach, deutsch)
         sorted_matches = sorted(
             best_per_word.values(),
-            key=lambda m: (m.distance, len(m.word))
+            key=lambda m: (m.distance, self._word_score(m.word))
         )
 
         return sorted_matches[:top_n]
+
+    @staticmethod
+    def _word_score(word: str) -> float:
+        """Bewertet Wort-Qualität. Niedriger = besser für Nutzer."""
+        score = 0.0
+
+        # Multi-Wort → unbrauchbar
+        if " " in word:
+            return 999.0
+
+        # Länge: 2-6 Buchstaben = optimal
+        length = len(word)
+        if length > 12:
+            score += 80.0
+        elif length > 8:
+            score += 30.0
+        elif length > 6:
+            score += 5.0
+
+        # Fremde Zeichen
+        if any(c in word for c in "áéíóúýàèìòùãõñêâîôûëï"):
+            score += 100.0
+
+        # Nur ASCII, keine Umlaute, klein geschrieben → sehr verdächtig
+        if word.isascii() and word[0].islower() and len(word) > 2:
+            # Englische/sonstige Fremdwörter
+            score += 200.0
+
+        # ASCII-only + lang → wahrscheinlich englisch
+        if word.isascii() and len(word) > 6:
+            score += 50.0
+
+        return score
