@@ -18,40 +18,31 @@ class LautBau:
         self.matcher = Matcher(db_path)
 
     def _match_or_hint(self, seg_ipa: str, threshold: float) -> RenderedSegment:
-        """Versucht ein Segment zu matchen. Falls kein Match: prüft auf
-        Artikulations-Hinweise für einzelne Phoneme.
+        """Matcht ein Segment, mit Fallback auf Artikulations-Hinweise."""
+        hint_phonemes = [ch for ch in seg_ipa if get_hint(ch)]
+        matchable = "".join(ch for ch in seg_ipa if not get_hint(ch))
 
-        Gestaffelte Strategie (Konzept §6.1):
-        1. Ganzes Segment matchen
-        2. Wenn kein Match: Segment auf einzelne Phoneme prüfen
-           - Phoneme mit Hint → Artikulations-Hinweis
-           - Restliche Phoneme → erneut matchen
-        """
-        # Stufe 1: Ganzes Segment matchen
-        matches = self.matcher.find_matches(seg_ipa, threshold=threshold, top_n=1)
-        if matches:
-            return RenderedSegment(match=matches[0], hint=None)
+        hint_text = None
+        if hint_phonemes:
+            hints = [get_hint(ch) for ch in hint_phonemes if get_hint(ch)]
+            hint_text = "; ".join(hints) if hints else None
 
-        # Stufe 2: Einzelne Phoneme auf Hints prüfen
-        hints_found = []
-        for ch in seg_ipa:
-            hint = get_hint(ch)
-            if hint:
-                hints_found.append(hint)
+        match = None
+        if matchable and len(matchable) > 2:
+            # Genug Phoneme für eigenständiges Matching
+            matches = self.matcher.find_matches(matchable, threshold=threshold, top_n=1)
+            if matches:
+                match = matches[0]
+        elif seg_ipa:
+            # Kurzes Segment oder hint-dominiert → Vollsegment mit Approximation
+            matches = self.matcher.find_matches(seg_ipa, threshold=threshold, top_n=1)
+            if matches:
+                match = matches[0]
 
-        if hints_found:
-            # Prüfe ob es auch matchbare Phoneme im Segment gibt
-            matchable = "".join(ch for ch in seg_ipa if not get_hint(ch))
-            if matchable and len(matchable) >= 1:
-                sub_matches = self.matcher.find_matches(matchable, threshold=threshold, top_n=1)
-                if sub_matches:
-                    hint_text = "; ".join(hints_found)
-                    return RenderedSegment(match=sub_matches[0], hint=hint_text)
-            # Nur Hints, kein Match
-            return RenderedSegment(match=None, hint="; ".join(hints_found))
+        if not match and not hint_text:
+            return RenderedSegment(match=None, hint=None)
 
-        # Kein Match, keine Hints
-        return RenderedSegment(match=None, hint=None)
+        return RenderedSegment(match=match, hint=hint_text)
 
     def pronounce(
         self,
