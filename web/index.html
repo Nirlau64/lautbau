@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LautBau — Aussprachehilfe</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --text: #e0e0e0;
+    --dim: #666;
+    --accent: #7c3aed;
+    --hint: #f59e0b;
+    --match: #10b981;
+    --input-bg: #0f3460;
+    --border: #2a2a4a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+  .container { max-width: 600px; width: 100%; }
+  h1 { font-size: 2rem; margin-bottom: 0.5rem; color: var(--accent); }
+  .subtitle { color: var(--dim); margin-bottom: 2rem; font-size: 0.9rem; }
+  
+  .input-group { display: flex; gap: 0.5rem; margin-bottom: 2rem; }
+  #word-input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    font-size: 1.1rem;
+    background: var(--input-bg);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  #word-input:focus { border-color: var(--accent); }
+  #submit-btn {
+    padding: 0.75rem 1.5rem;
+    font-size: 1.1rem;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  #submit-btn:hover { opacity: 0.9; }
+  #submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  #result {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 1.5rem;
+    min-height: 80px;
+    display: none;
+    line-height: 1.8;
+    font-size: 1.1rem;
+  }
+  #result.visible { display: block; }
+  #result .arrow { color: var(--dim); }
+  #result .hint { color: var(--hint); font-style: italic; }
+  #result .match { color: var(--match); font-weight: 600; }
+  #result .dim { color: var(--dim); }
+  #result .stress { color: #fbbf24; }
+  #result .error { color: #ef4444; }
+
+  .examples {
+    margin-top: 2rem;
+    color: var(--dim);
+    font-size: 0.85rem;
+  }
+  .examples code {
+    background: var(--input-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    color: var(--text);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LautBau</h1>
+  <p class="subtitle">Englische Aussprache durch deutsche Wortbausteine</p>
+
+  <div class="input-group">
+    <input id="word-input" type="text" placeholder="Englisches Wort eingeben..."
+           autofocus autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="submit-btn" onclick="lookup()">Los</button>
+  </div>
+
+  <div id="result"></div>
+
+  <div class="examples">
+    Beispiele: <code>cat</code> <code>knight</code> <code>though</code>
+    <code>beautiful</code> <code>squirrel</code> <code>island</code>
+  </div>
+</div>
+
+<script>
+const API = "/api/pronounce";
+const input = document.getElementById("word-input");
+const btn = document.getElementById("submit-btn");
+const result = document.getElementById("result");
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") lookup();
+});
+
+// Click on example words
+document.querySelectorAll(".examples code").forEach(el => {
+  el.style.cursor = "pointer";
+  el.addEventListener("click", () => {
+    input.value = el.textContent;
+    lookup();
+  });
+});
+
+function renderResult(raw) {
+  // Parse the output: <dim>text</dim> <match>text</match>
+  // Simple parsing: UPPERCASE = highlighted match, (parens) = hint
+  let html = raw;
+
+  // Convert → to styled arrow
+  html = html.replace(/ → /g, ' <span class="arrow">→</span> ');
+
+  // Style hints: (Text in Klammern)
+  html = html.replace(/\(([^)]+)\)/g, '<span class="hint">($1)</span>');
+
+  // Style lightning bolt
+  html = html.replace(/⚡/g, '<span class="stress">⚡</span>');
+
+  // Style UPPERCASE matches within words
+  html = html.replace(/\b([A-ZÄÖÜ]+)([a-zäöüß]*)\b/g, (match, upper, lower) => {
+    return `<span class="match">${upper}</span><span class="dim">${lower}</span>`;
+  });
+
+  // Style standalone UPPERCASE words (full matches)
+  html = html.replace(/\b([A-ZÄÖÜ][A-ZÄÖÜ]+)\b/g, '<span class="match">$1</span>');
+
+  return html;
+}
+
+async function lookup() {
+  const word = input.value.trim();
+  if (!word) return;
+
+  btn.disabled = true;
+  btn.textContent = "...";
+  result.className = "visible";
+  result.innerHTML = '<span class="dim">Suche...</span>';
+
+  try {
+    const resp = await fetch(`${API}?word=${encodeURIComponent(word)}`);
+    const data = await resp.json();
+
+    if (data.error) {
+      result.innerHTML = `<span class="error">✗ ${data.error}</span>`;
+    } else {
+      result.innerHTML = renderResult(data.result);
+    }
+  } catch (e) {
+    result.innerHTML = `<span class="error">✗ Verbindungsfehler</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Los";
+  }
+}
+</script>
+</body>
+</html>

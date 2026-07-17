@@ -7,7 +7,6 @@ venv/
 .venv/
 
 # Database
-*.db
 *.db-shm
 *.db-wal
 data/kaikki-de.jsonl
